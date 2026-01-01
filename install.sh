@@ -25,6 +25,7 @@ fi
 echo -e "${YELLOW}Installing rokucli...${NC}"
 
 cd /tmp
+rm -rf rokucli
 git clone https://github.com/skylvie/rokucli > /dev/null 2>&1
 cd rokucli
 chmod +x roku
