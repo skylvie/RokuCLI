@@ -1,0 +1,481 @@
+#!/bin/bash
+
+# RokuCLI v1.0.0
+# https://github.com/skylvie/rokucli
+
+VERSION="1.0.0"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+GRAY='\033[0;90m'
+NC='\033[0m' # No Color
+
+ROKU_IP=""
+DEV_MODE_STATUS=""
+
+show_ascii() {
+    local ip=$1
+    local dev_status=$2
+    local tv_version=$3
+    
+    echo -e " _______________"
+    echo -e "| /~~~~~~~~\\ ||||  ${WHITE}Roku CLI (v${VERSION})${NC}"
+    echo -e "||          |...|  ${BLUE}https://github.com/skylvie/rokucli${NC}"
+    echo -e "||          |   |  ${WHITE}TV Version: v${tv_version}${NC}"
+    echo -e "| \\________/  O |  ${WHITE}Developer Mode: ${dev_status}${NC}"
+    echo -e " ~~~~~~~~~~~~~~~"
+}
+
+check_connection() {
+    local ip=$1
+
+    if ! curl -s -m 3 "http://${ip}:8060/query/device-info" > /dev/null 2>&1; then
+        echo -e "${RED}Failed to connect to RokuTV${NC}"
+        exit 1
+    fi
+}
+
+check_dev_mode() {
+    local ip=$1
+    local response=$(curl -s -m 5 "http://${ip}:8060/query/apps" 2>&1)
+    
+    if echo "$response" | grep -q "ECP command not allowed in Limited mode"; then
+        echo -e "${RED}Disabled${NC}"
+        return 1
+    else
+        echo -e "${GREEN}Enabled${NC}"
+        return 0
+    fi
+}
+
+roku_get() {
+    local endpoint=$1
+    local response=$(curl -s -m 5 "http://${ROKU_IP}:8060${endpoint}" 2>&1)
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Endpoint provided is not reachable${NC}"
+        return 1
+    fi
+    
+    echo "$response"
+    return 0
+}
+
+roku_post() {
+    local endpoint=$1
+    local response=$(curl -s -X POST -m 5 "http://${ROKU_IP}:8060${endpoint}" 2>&1)
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Endpoint provided is not reachable${NC}"
+        return 1
+    fi
+    
+    echo "$response"
+    return 0
+}
+
+cmd_help() {
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${WHITE}Commands:${NC}"
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
+    {
+        echo -e "${YELLOW}help\t${NC}Shows this help message"
+        echo -e "${YELLOW}version\t${NC}Shows RokuCLI version and credit"
+        echo -e "${GREEN}info <key>\t${NC}Get device info for specific key"
+        echo -e "${GREEN}info --help\t${NC}Shows all available keys"
+        echo -e "${GREEN}info *\t${NC}List all device info values"
+        echo -e "${GREEN}keydown <key>\t${NC}Send keydown event"
+        echo -e "${GREEN}keyup <key>\t${NC}Send keyup event"
+        echo -e "${GREEN}keypress <key>\t${NC}Send keypress event"
+        echo -e "${GREEN}keypress -l <letter>\t${NC}Send letter keypress (Lit_<letter>)"
+        echo -e "${GREEN}keypress --help\t${NC}Shows all available keys"
+        echo -e "${GREEN}shutdown\t${NC}Power off the Roku"
+        echo -e "${GREEN}apps\t${NC}List all installed apps"
+        echo -e "${GREEN}app\t${NC}Get currently active app"
+        echo -e "${GREEN}open <id_or_name>\t${NC}Launch app by ID or name"
+        echo -e "${GREEN}install <id>\t${NC}Install app by ID"
+        echo -e "${GREEN}browse\t${NC}Open search/browse interface"
+        echo -e "${GREEN}search <query>\t${NC}Search for content"
+        echo -e "${GREEN}hdmi <number>\t${NC}Switch to HDMI input"
+        echo -e "${GREEN}yt <video_id>\t${NC}Open YouTube video"
+        echo -e "${GREEN}tv-channels\t${NC}List TV channels"
+        echo -e "${GREEN}active-tv-channel\t${NC}Get active TV channel"
+    } | column -t -s $'\t'
+    echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
+}
+
+cmd_version() {
+    echo -e "${WHITE}RokuCLI${NC} v${VERSION}"
+    echo -e "${BLUE}https://github.com/skylvie/rokucli${NC}"
+}
+
+cmd_info() {
+    local key=$1
+    
+    if [ "$key" == "--help" ]; then
+        local response=$(roku_get "/query/device-info")
+        [ $? -ne 0 ] && return 1
+        
+        echo -e "${CYAN}Available device info keys:${NC}"
+        echo "$response" | grep -oP '(?<=<)[^/>]+(?=>)' | grep -v '^/' | sort -u | while read tag; do
+            echo -e "  ${YELLOW}${tag}${NC}"
+        done
+        return
+    fi
+    
+    local response=$(roku_get "/query/device-info")
+    [ $? -ne 0 ] && return 1
+    
+    if [ "$key" == "*" ]; then
+        echo -e "${CYAN}Device Information:${NC}"
+        echo "$response" | grep -oP '(?<=<)[^>]+(?=>)' | grep -v '^/' | while read line; do
+            if [[ ! "$line" =~ [[:space:]] ]]; then
+                local value=$(echo "$response" | grep -oP "(?<=<${line}>)[^<]+")
+                echo -e "${YELLOW}${line}:${NC} ${WHITE}${value}${NC}"
+            fi
+        done
+    else
+        local value=$(echo "$response" | grep -oP "(?<=<${key}>)[^<]+")
+        if [ -n "$value" ]; then
+            echo -e "${YELLOW}${key}:${NC} ${WHITE}${value}${NC}"
+        else
+            echo -e "${RED}Key '${key}' not found. Use 'info --help' to see available keys.${NC}"
+        fi
+    fi
+}
+
+cmd_key() {
+    local action=$1
+    local key=$2
+    
+    if [ "$key" == "--help" ]; then
+        echo -e "${CYAN}Available keys:${NC}"
+        echo -e "${YELLOW}Home, Rev, Fwd, Play, Select, Left, Right, Down, Up, Back"
+        echo -e "InstantReplay, Info, Backspace, Search, Enter"
+        echo -e "VolumeDown, VolumeMute, VolumeUp, PowerOff"
+        echo -e "Lit_<letter/number/symbol>${NC}"
+        return
+    fi
+    
+    if [ "$key" == "-l" ]; then
+        local letter=$3
+        key="Lit_${letter}"
+    fi
+    
+    local response=$(roku_post "/${action}/${key}")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${GREEN}[v] Sent ${action} ${key}${NC}"
+}
+
+cmd_apps() {
+    local response=$(roku_get "/query/apps")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${CYAN}Installed Apps:${NC}"
+    echo "$response" | grep -oP '<app id="\K[^"]+|(?<=>)[^<]+' | paste -d '|' - - | while IFS='|' read id name; do
+        local version=$(echo "$response" | grep "id=\"${id}\"" | grep -oP 'version="\K[^"]+')
+        echo -e "${YELLOW}- ${name}${NC} | ID: ${MAGENTA}${id}${NC} | Version: ${GRAY}${version}${NC}"
+    done
+}
+
+cmd_active_app() {
+    local response=$(roku_get "/query/active-app")
+    [ $? -ne 0 ] && return 1
+    
+    local app_name=$(echo "$response" | grep -oP '(?<=<app>)[^<]+')
+    local app_id=$(echo "$response" | grep -oP 'id="\K[^"]+')
+    
+    echo -e "${CYAN}Active App:${NC}"
+    echo -e "${YELLOW}${app_name}${NC} | ID: ${MAGENTA}${app_id}${NC}"
+}
+
+cmd_open() {
+    local id_or_name=$1
+
+    if [[ "$id_or_name" =~ ^[0-9]+$ ]]; then
+        local response=$(roku_post "/launch/${id_or_name}")
+        [ $? -ne 0 ] && return 1
+        echo -e "${GREEN}[v] Launched app ID: ${id_or_name}${NC}"
+    else
+        local apps_response=$(roku_get "/query/apps")
+        [ $? -ne 0 ] && return 1
+        
+        local app_id=$(echo "$apps_response" | grep -i "${id_or_name}" | head -1 | grep -oP 'id="\K[^"]+')
+        
+        if [ -n "$app_id" ]; then
+            local response=$(roku_post "/launch/${app_id}")
+            [ $? -ne 0 ] && return 1
+            echo -e "${GREEN}[v] Launched ${id_or_name} (ID: ${app_id})${NC}"
+        else
+            echo -e "${RED}App '${id_or_name}' not found${NC}"
+            return 1
+        fi
+    fi
+}
+
+cmd_install() {
+    local id=$1
+    local response=$(roku_post "/install/${id}")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${GREEN}[v] Installing app ID: ${id}${NC}"
+}
+
+cmd_browse() {
+    local response=$(roku_post "/search/browse")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${GREEN}[v] Opened browse interface${NC}"
+}
+
+cmd_search() {
+    local query=$1
+    local encoded_query=$(echo "$query" | sed 's/ /%20/g')
+    local response=$(roku_post "/search/keyword?keyword=${encoded_query}")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${GREEN}[v] Searching for: ${query}${NC}"
+}
+
+cmd_hdmi() {
+    local number=$1
+    local response=$(roku_post "/keypress/InputHDMI${number}")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${GREEN}[v] Switched to HDMI ${number}${NC}"
+}
+
+cmd_yt() {
+    local video_id=$1
+    
+    if [ -z "$video_id" ]; then
+        echo -e "${RED}Please provide a YouTube video ID${NC}"
+        return 1
+    fi
+    
+    local apps_response=$(roku_get "/query/apps")
+    [ $? -ne 0 ] && return 1
+    
+    local youtube_id=$(echo "$apps_response" | grep -i "YouTube" | head -1 | grep -oP 'id="\K[^"]+' )
+    
+    if [ -z "$youtube_id" ]; then
+        echo -e "${RED}YouTube app not found on this Roku${NC}"
+        return 1
+    fi
+    
+    local response=$(roku_post "/launch/${youtube_id}?contentID=${video_id}&mediaType=video")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${GREEN}[v] Opening YouTube video: ${video_id}${NC}"
+}
+
+cmd_tv_channels() {
+    local response=$(roku_get "/query/tv-channels")
+    [ $? -ne 0 ] && return 1
+    
+    echo -e "${CYAN}TV Channels:${NC}"
+    echo "$response" | grep -oP '<channel id="\K[^"]+|number="\K[^"]+|(?<=<name>)[^<]+' | \
+        paste -d '|' - - - | while IFS='|' read id number name; do
+        echo -e "${YELLOW}${number}. ${name}${NC} | ID: ${MAGENTA}${id}${NC}"
+    done
+}
+
+cmd_active_tv_channel() {
+    local response=$(roku_get "/query/active-tv-channel")
+    [ $? -ne 0 ] && return 1
+    
+    local channel_name=$(echo "$response" | grep -oP '(?<=<name>)[^<]+')
+    local channel_number=$(echo "$response" | grep -oP 'number="\K[^"]+')
+    
+    echo -e "${CYAN}Active TV Channel:${NC}"
+    echo -e "${YELLOW}${channel_number}. ${channel_name}${NC}"
+}
+
+cmd_shutdown() {
+    cmd_key "keypress" "PowerOff"
+}
+
+process_command() {
+    local cmd=$1
+    shift
+    
+    case "$cmd" in
+        help)
+            cmd_help
+            ;;
+        version)
+            cmd_version
+            ;;
+        info)
+            cmd_info "$@"
+            ;;
+        keydown|keyup|keypress)
+            cmd_key "$cmd" "$@"
+            ;;
+        shutdown)
+            cmd_shutdown
+            ;;
+        apps)
+            cmd_apps
+            ;;
+        app)
+            cmd_active_app
+            ;;
+        open)
+            cmd_open "$@"
+            ;;
+        install)
+            cmd_install "$@"
+            ;;
+        browse)
+            cmd_browse
+            ;;
+        search)
+            cmd_search "$@"
+            ;;
+        hdmi)
+            cmd_hdmi "$@"
+            ;;
+        yt)
+            cmd_yt "$@"
+            ;;
+        tv-channels)
+            cmd_tv_channels
+            ;;
+        active-tv-channel)
+            cmd_active_tv_channel
+            ;;
+        exit|quit)
+            exit 0
+            ;;
+        "")
+            ;;
+        *)
+            echo -e "${RED}Command not found, run help${NC}"
+            ;;
+    esac
+}
+
+interactive_mode() {
+    history -c
+    HISTFILE=~/.rokucli_history
+    
+    while true; do
+        read -e -r -p "$(echo -e ${GREEN}Command: ${NC})" input
+        [ -z "$input" ] && continue
+        history -s "$input"
+        read -ra parts <<< "$input" 
+        process_command "${parts[@]}"
+    done
+}
+
+main() {
+    if [ $# -eq 0 ]; then
+        echo -e "${RED}Usage: roku <ip> [options]${NC}"
+        echo ""
+        echo -e "${YELLOW}Options:${NC}"
+        echo -e "  ${GREEN}--help${NC}                    Show help message"
+        echo -e "  ${GREEN}--version${NC}                 Show version info"
+        echo -e "  ${GREEN}--info <key>${NC}              Get device info"
+        echo -e "  ${GREEN}--keypress <key>${NC}          Send keypress command"
+        echo -e "  ${GREEN}--keydown <key>${NC}           Send keydown command"
+        echo -e "  ${GREEN}--keyup <key>${NC}             Send keyup command"
+        echo -e "  ${GREEN}--shutdown${NC}                Power off the Roku"
+        echo -e "  ${GREEN}--apps${NC}                    List all apps"
+        echo -e "  ${GREEN}--app${NC}                     Get currently active app"
+        echo -e "  ${GREEN}--open <app>${NC}              Open app by name or ID"
+        echo -e "  ${GREEN}--install <id>${NC}            Install app by ID"
+        echo -e "  ${GREEN}--browse${NC}                  Open browse interface"
+        echo -e "  ${GREEN}--search <query>${NC}          Search for content"
+        echo -e "  ${GREEN}--hdmi <num>${NC}              Switch to HDMI input"
+        echo -e "  ${GREEN}--yt <video_id>${NC}           Open YouTube video"
+        echo -e "  ${GREEN}--tv-channels${NC}             List TV channels"
+        echo -e "  ${GREEN}--active-tv-channel${NC}       Get active TV channel"
+        exit 1
+    fi
+    
+    ROKU_IP=$1
+    shift
+
+    check_connection "$ROKU_IP"
+
+    if [ $# -gt 0 ]; then
+        local flag=$1
+        shift
+        
+        case "$flag" in
+            --help)
+                cmd_help
+                ;;
+            --version)
+                cmd_version
+                ;;
+            --info)
+                cmd_info "$@"
+                ;;
+            --keypress)
+                cmd_key "keypress" "$@"
+                ;;
+            --keydown)
+                cmd_key "keydown" "$@"
+                ;;
+            --keyup)
+                cmd_key "keyup" "$@"
+                ;;
+            --shutdown)
+                cmd_shutdown
+                ;;
+            --apps)
+                cmd_apps
+                ;;
+            --app)
+                cmd_active_app
+                ;;
+            --open)
+                cmd_open "$@"
+                ;;
+            --install)
+                cmd_install "$@"
+                ;;
+            --browse)
+                cmd_browse
+                ;;
+            --search)
+                cmd_search "$@"
+                ;;
+            --hdmi)
+                cmd_hdmi "$@"
+                ;;
+            --yt)
+                cmd_yt "$@"
+                ;;
+            --tv-channels)
+                cmd_tv_channels
+                ;;
+            --active-tv-channel)
+                cmd_active_tv_channel
+                ;;
+            *)
+                echo -e "${RED}Unknown flag: ${flag}${NC}"
+                exit 1
+                ;;
+        esac
+    else
+        DEV_MODE_STATUS=$(check_dev_mode "$ROKU_IP")
+
+        local device_info=$(roku_get "/query/device-info")
+        local tv_version=$(echo "$device_info" | grep -oP '(?<=<software-version>)[^<]+' || echo "XX.XX.XX")
+        
+        show_ascii "$ROKU_IP" "$DEV_MODE_STATUS" "$tv_version"
+        interactive_mode
+    fi
+}
+
+main "$@"
