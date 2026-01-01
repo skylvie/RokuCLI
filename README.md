@@ -27,6 +27,7 @@ roku <your_TVs_ip> --open 837
 ```
 help                  Shows this help message
 version               Shows RokuCLI version and credit
+update                Updates RokuCLI
 
 info <key>            Get device info for specific key
 info --help           Shows all available keys
@@ -62,3 +63,5 @@ Release!
 - `~/.local/share/rokucli`
 - `clear` command
 - `--update` flag
+### v1.1.1
+- Added dependency checks

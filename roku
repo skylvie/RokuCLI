@@ -21,6 +21,23 @@ DEV_MODE_STATUS=""
 
 POWER_STATE_FILE=~/.local/share/rokucli/power_state
 
+check_deps() {
+    local missing_deps=()
+    
+    command -v curl >/dev/null 2>&1 || missing_deps+=("curl")
+    
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        echo -e "${RED}Error: Missing required dependencies:${NC}"
+
+        for dep in "${missing_deps[@]}"; do
+            echo -e "  ${YELLOW}- ${dep}${NC}"
+        done
+
+        echo -e "${YELLOW}Please install the missing dependencies and try again${NC}"
+        exit 1
+    fi
+}
+
 show_ascii() {
     local ip=$1
     local dev_status=$2
@@ -123,6 +140,11 @@ cmd_clear() {
 }
 
 cmd_update() {
+    if ! command -v git >/dev/null 2>&1; then
+        echo -e "${RED}Error: git is required for updates${NC}"
+        return 1
+    fi
+    
     echo -e "${YELLOW}Updating rokucli...${NC}"
 
     cd /tmp
@@ -461,6 +483,7 @@ main() {
     ROKU_IP=$1
     shift
 
+    check_deps
     check_connection "$ROKU_IP"
 
     if [ $# -gt 0 ]; then
