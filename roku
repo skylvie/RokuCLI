@@ -3,7 +3,7 @@
 # RokuCLI v1.0.0
 # https://github.com/skylvie/rokucli
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Colors
 RED='\033[0;31m'
@@ -19,13 +19,15 @@ NC='\033[0m' # No Color
 ROKU_IP=""
 DEV_MODE_STATUS=""
 
+POWER_STATE_FILE=~/.local/share/rokucli/power_state
+
 show_ascii() {
     local ip=$1
     local dev_status=$2
     local tv_version=$3
     
     echo -e " _______________"
-    echo -e "| /~~~~~~~~\\ ||||  ${WHITE}Roku CLI (v${VERSION})${NC}"
+    echo -e "| /~~~~~~~~\\ ||||  ${WHITE}RokuCLI (v${VERSION})${NC}"
     echo -e "||          |...|  ${BLUE}https://github.com/skylvie/rokucli${NC}"
     echo -e "||          |   |  ${WHITE}TV Version: v${tv_version}${NC}"
     echo -e "| \\________/  O |  ${WHITE}Developer Mode: ${dev_status}${NC}"
@@ -86,16 +88,17 @@ cmd_help() {
     echo -e "${MAGENTA}═══════════════════════════════════════════════════════════════${NC}"
     {
         echo -e "${YELLOW}help\t${NC}Shows this help message"
-        echo -e "${YELLOW}version\t${NC}Shows RokuCLI version and credit"
+        echo -e "${YELLOW}version\t${NC}Shows RokuCLI version"
+        echo -e "${YELLOW}update\t${NC}Update RokuCLI"
+        echo -e "${YELLOW}clear\t${NC}Clear the screen"
         echo -e "${GREEN}info <key>\t${NC}Get device info for specific key"
         echo -e "${GREEN}info --help\t${NC}Shows all available keys"
         echo -e "${GREEN}info *\t${NC}List all device info values"
         echo -e "${GREEN}keydown <key>\t${NC}Send keydown event"
         echo -e "${GREEN}keyup <key>\t${NC}Send keyup event"
         echo -e "${GREEN}keypress <key>\t${NC}Send keypress event"
-        echo -e "${GREEN}keypress -l <letter>\t${NC}Send letter keypress (Lit_<letter>)"
         echo -e "${GREEN}keypress --help\t${NC}Shows all available keys"
-        echo -e "${GREEN}shutdown\t${NC}Power off the Roku"
+        echo -e "${GREEN}power\t${NC}Toggle power"
         echo -e "${GREEN}apps\t${NC}List all installed apps"
         echo -e "${GREEN}app\t${NC}Get currently active app"
         echo -e "${GREEN}open <id_or_name>\t${NC}Launch app by ID or name"
@@ -113,6 +116,36 @@ cmd_help() {
 cmd_version() {
     echo -e "${WHITE}RokuCLI${NC} v${VERSION}"
     echo -e "${BLUE}https://github.com/skylvie/rokucli${NC}"
+}
+
+cmd_clear() {
+    clear
+}
+
+cmd_update() {
+    echo -e "${YELLOW}Updating rokucli...${NC}"
+
+    cd /tmp
+    rm -rf rokucli
+
+    git clone https://github.com/skylvie/rokucli > /dev/null 2>&1
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to download update${NC}"
+        return 1
+    fi
+
+    cd rokucli
+    chmod +x roku
+    sudo cp roku /usr/bin/roku
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to install update (need sudo access)${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}RokuCLI updated successfully!${NC}"
+    echo -e "${YELLOW}Please restart your session to use the updated version${NC}"
 }
 
 cmd_info() {
@@ -158,14 +191,15 @@ cmd_key() {
         echo -e "${CYAN}Available keys:${NC}"
         echo -e "${YELLOW}Home, Rev, Fwd, Play, Select, Left, Right, Down, Up, Back"
         echo -e "InstantReplay, Info, Backspace, Search, Enter"
-        echo -e "VolumeDown, VolumeMute, VolumeUp, PowerOff"
-        echo -e "Lit_<letter/number/symbol>${NC}"
+        echo -e "VolumeDown, VolumeMute, VolumeUp, PowerOff, PowerOn"
+        echo -e "Any other character will be sent as Lit_<character>${NC}"
         return
     fi
     
-    if [ "$key" == "-l" ]; then
-        local letter=$3
-        key="Lit_${letter}"
+    local known_keys="Home|Rev|Fwd|Play|Select|Left|Right|Down|Up|Back|InstantReplay|Info|Backspace|Search|Enter|VolumeDown|VolumeMute|VolumeUp|PowerOff|PowerOn"
+    
+    if [[ ! "$key" =~ ^($known_keys|InputHDMI[0-9]+|Lit_.+)$ ]]; then
+        key="Lit_${key}"
     fi
     
     local response=$(roku_post "/${action}/${key}")
@@ -197,7 +231,7 @@ cmd_active_app() {
 }
 
 cmd_open() {
-    local id_or_name=$1
+    local id_or_name="$*"
 
     if [[ "$id_or_name" =~ ^[0-9]+$ ]]; then
         local response=$(roku_post "/launch/${id_or_name}")
@@ -298,8 +332,23 @@ cmd_active_tv_channel() {
     echo -e "${YELLOW}${channel_number}. ${channel_name}${NC}"
 }
 
-cmd_shutdown() {
-    cmd_key "keypress" "PowerOff"
+cmd_power() {
+    local state_file="${POWER_STATE_FILE/#\~/$HOME}"
+    local current_state="off"
+    
+    mkdir -p "$(dirname "$state_file")"
+    
+    if [ -f "$state_file" ]; then
+        current_state=$(cat "$state_file")
+    fi
+    
+    if [ "$current_state" == "on" ]; then
+        cmd_key "keypress" "PowerOff"
+        echo "off" > "$state_file"
+    else
+        cmd_key "keypress" "PowerOn"
+        echo "on" > "$state_file"
+    fi
 }
 
 process_command() {
@@ -313,14 +362,20 @@ process_command() {
         version)
             cmd_version
             ;;
+        update)
+            cmd_update
+            ;;
+        clear)
+            cmd_clear
+            ;;
         info)
             cmd_info "$@"
             ;;
         keydown|keyup|keypress)
             cmd_key "$cmd" "$@"
             ;;
-        shutdown)
-            cmd_shutdown
+        power)
+            cmd_power
             ;;
         apps)
             cmd_apps
@@ -365,7 +420,8 @@ process_command() {
 
 interactive_mode() {
     history -c
-    HISTFILE=~/.rokucli_history
+    HISTFILE=~/.local/share/rokucli/history
+    mkdir -p ~/.local/share/rokucli
     
     while true; do
         read -e -r -p "$(echo -e ${GREEN}Command: ${NC})" input
@@ -383,11 +439,12 @@ main() {
         echo -e "${YELLOW}Options:${NC}"
         echo -e "  ${GREEN}--help${NC}                    Show help message"
         echo -e "  ${GREEN}--version${NC}                 Show version info"
+        echo -e "  ${GREEN}--update${NC}                  Update RokuCLI"
         echo -e "  ${GREEN}--info <key>${NC}              Get device info"
         echo -e "  ${GREEN}--keypress <key>${NC}          Send keypress command"
         echo -e "  ${GREEN}--keydown <key>${NC}           Send keydown command"
         echo -e "  ${GREEN}--keyup <key>${NC}             Send keyup command"
-        echo -e "  ${GREEN}--shutdown${NC}                Power off the Roku"
+        echo -e "  ${GREEN}--power${NC}                   Toggle power"
         echo -e "  ${GREEN}--apps${NC}                    List all apps"
         echo -e "  ${GREEN}--app${NC}                     Get currently active app"
         echo -e "  ${GREEN}--open <app>${NC}              Open app by name or ID"
@@ -417,6 +474,9 @@ main() {
             --version)
                 cmd_version
                 ;;
+            --update)
+                cmd_update
+                ;;
             --info)
                 cmd_info "$@"
                 ;;
@@ -429,8 +489,8 @@ main() {
             --keyup)
                 cmd_key "keyup" "$@"
                 ;;
-            --shutdown)
-                cmd_shutdown
+            --power)
+                cmd_power
                 ;;
             --apps)
                 cmd_apps
