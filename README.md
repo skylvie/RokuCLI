@@ -41,7 +41,7 @@ power                 Cycle power state
 
 apps                  List all installed apps
 app                   Get currently active app
-open <id_or_name>     Launch app by ID or name
+open <id/name> [k=v]  Launch app by ID or name with optional deeplink parameters
 hdmi <number>         Switch to HDMI input
 yt <video_id>         Open YouTube video
 install <id>          Install app by ID
@@ -68,3 +68,5 @@ Release!
 ### v1.2.0
 - Source code link replaced with friendly-device-name in ASCII art
 - `connect` command
+### v1.2.1
+Deeplink support

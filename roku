@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# RokuCLI v1.2.0
+# RokuCLI v1.2.1
 # Repo: https://github.com/skylvie/rokucli
 # Source Code License: MIT
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 
 # Colors
 RED='\033[0;31m'
@@ -118,7 +118,7 @@ cmd_help() {
         echo -e "${GREEN}power\t${NC}Toggle power"
         echo -e "${GREEN}apps\t${NC}List all installed apps"
         echo -e "${GREEN}app\t${NC}Get currently active app"
-        echo -e "${GREEN}open <id_or_name>\t${NC}Launch app by ID or name"
+        echo -e "${GREEN}open <id_or_name> [key=value ...]\t${NC}Launch app by ID or name with optional deeplink parameters"
         echo -e "${GREEN}install <id>\t${NC}Install app by ID"
         echo -e "${GREEN}browse\t${NC}Open search/browse interface"
         echo -e "${GREEN}search <query>\t${NC}Search for content"
@@ -251,21 +251,36 @@ cmd_active_app() {
 }
 
 cmd_open() {
-    local id_or_name="$*"
+    local id_or_name="$1"
+    shift
+    
+    # Parse key=value parameters for deeplinks
+    local params=""
+    if [ $# -gt 0 ]; then
+        local first=true
+        for arg in "$@"; do
+            if [[ "$arg" =~ ^[^=]+=[^=]+$ ]]; then
+                if [ "$first" = true ]; then
+                    params="?${arg}"
+                    first=false
+                else
+                    params="${params}&${arg}"
+                fi
+            fi
+        done
+    fi
 
     if [[ "$id_or_name" =~ ^[0-9]+$ ]]; then
-        local response=$(roku_post "/launch/${id_or_name}")
+        local response=$(roku_post "/launch/${id_or_name}${params}")
         [ $? -ne 0 ] && return 1
         echo -e "${GREEN}[v] Launched app ID: ${id_or_name}${NC}"
     else
         local apps_response=$(roku_get "/query/apps")
-
         [ $? -ne 0 ] && return 1
-
         local app_id=$(echo "$apps_response" | grep -i "${id_or_name}" | head -1 | grep -oP 'id="\K[^"]+')
         
         if [ -n "$app_id" ]; then
-            local response=$(roku_post "/launch/${app_id}")
+            local response=$(roku_post "/launch/${app_id}${params}")
 
             [ $? -ne 0 ] && return 1
             echo -e "${GREEN}[v] Launched ${id_or_name} (ID: ${app_id})${NC}"
