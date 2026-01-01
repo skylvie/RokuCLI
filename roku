@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# RokuCLI v1.2.1
+# RokuCLI v1.2.2
 # Repo: https://github.com/skylvie/rokucli
 # Source Code License: MIT
 
-VERSION="1.2.1"
+VERSION="1.2.2"
 
 # Colors
 RED='\033[0;31m'
@@ -243,7 +243,7 @@ cmd_active_app() {
     local response=$(roku_get "/query/active-app")
     [ $? -ne 0 ] && return 1
     
-    local app_name=$(echo "$response" | grep -oP '(?<=<app>)[^<]+')
+    local app_name=$(echo "$response" | sed -n 's/.*<app[^>]*>\([^<]*\)<\/app>.*/\1/p')
     local app_id=$(echo "$response" | grep -oP 'id="\K[^"]+')
     
     echo -e "${CYAN}Active App:${NC}"

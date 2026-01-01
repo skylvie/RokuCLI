@@ -70,3 +70,5 @@ Release!
 - `connect` command
 ### v1.2.1
 Deeplink support
+### v1.2.2
+Fix `app` not displaying app name
