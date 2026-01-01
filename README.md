@@ -65,3 +65,6 @@ Release!
 - `--update` flag
 ### v1.1.1
 - Added dependency checks
+### v1.2.0
+- Source code link replaced with friendly-device-name in ASCII art
+- `connect` command

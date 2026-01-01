@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# RokuCLI v1.1.1
-# https://github.com/skylvie/rokucli
+# RokuCLI v1.2.0
+# Repo: https://github.com/skylvie/rokucli
+# Source Code License: MIT
 
-VERSION="1.1.1"
+VERSION="1.2.0"
 
 # Colors
 RED='\033[0;31m'
@@ -39,15 +40,15 @@ check_deps() {
 }
 
 show_ascii() {
-    local ip=$1
-    local dev_status=$2
-    local tv_version=$3
+    local dev_status=$1
+    local tv_version=$2
+    local device_name=$3
     
     echo -e " _______________"
-    echo -e "| /~~~~~~~~\\ ||||  ${WHITE}RokuCLI (v${VERSION})${NC}"
-    echo -e "||          |...|  ${BLUE}https://github.com/skylvie/rokucli${NC}"
-    echo -e "||          |   |  ${WHITE}TV Version: v${tv_version}${NC}"
-    echo -e "| \\________/  O |  ${WHITE}Developer Mode: ${dev_status}${NC}"
+    echo -e "| /~~~~~~~~\\ ||||  ${YELLOW}RokuCLI ${WHITE}(v${VERSION})${NC}"
+    echo -e "||          |...|  ${YELLOW}Device: ${WHITE}${device_name}${NC}"
+    echo -e "||          |   |  ${YELLOW}TV Version: ${WHITE}v${tv_version}${NC}"
+    echo -e "| \\________/  O |  ${YELLOW}Developer Mode: ${dev_status}${NC}"
     echo -e " ~~~~~~~~~~~~~~~"
 }
 
@@ -78,12 +79,11 @@ roku_get() {
     local response=$(curl -s -m 5 "http://${ROKU_IP}:8060${endpoint}" 2>&1)
     
     if [ $? -ne 0 ]; then
-        echo -e "${RED}Endpoint provided is not reachable${NC}"
+        echo -e "${RED}Failed to reach device${NC}"
         return 1
     fi
     
     echo "$response"
-    return 0
 }
 
 roku_post() {
@@ -91,12 +91,11 @@ roku_post() {
     local response=$(curl -s -X POST -m 5 "http://${ROKU_IP}:8060${endpoint}" 2>&1)
     
     if [ $? -ne 0 ]; then
-        echo -e "${RED}Endpoint provided is not reachable${NC}"
+        echo -e "${RED}Failed to reach device${NC}"
         return 1
     fi
     
     echo "$response"
-    return 0
 }
 
 cmd_help() {
@@ -106,6 +105,7 @@ cmd_help() {
     {
         echo -e "${YELLOW}help\t${NC}Shows this help message"
         echo -e "${YELLOW}version\t${NC}Shows RokuCLI version"
+        echo -e "${YELLOW}connect <ip>\t${NC}Connect to a Roku device"
         echo -e "${YELLOW}update\t${NC}Update RokuCLI"
         echo -e "${YELLOW}clear\t${NC}Clear the screen"
         echo -e "${GREEN}info <key>\t${NC}Get device info for specific key"
@@ -173,19 +173,16 @@ cmd_update() {
 cmd_info() {
     local key=$1
     
+    local response=$(roku_get "/query/device-info")
+    [ $? -ne 0 ] && return 1
+    
     if [ "$key" == "--help" ]; then
-        local response=$(roku_get "/query/device-info")
-        [ $? -ne 0 ] && return 1
-        
         echo -e "${CYAN}Available device info keys:${NC}"
         echo "$response" | grep -oP '(?<=<)[^/>]+(?=>)' | grep -v '^/' | sort -u | while read tag; do
             echo -e "  ${YELLOW}${tag}${NC}"
         done
         return
     fi
-    
-    local response=$(roku_get "/query/device-info")
-    [ $? -ne 0 ] && return 1
     
     if [ "$key" == "*" ]; then
         echo -e "${CYAN}Device Information:${NC}"
@@ -218,6 +215,7 @@ cmd_key() {
         return
     fi
     
+    # Auto-convert unknown keys to Lit_ format
     local known_keys="Home|Rev|Fwd|Play|Select|Left|Right|Down|Up|Back|InstantReplay|Info|Backspace|Search|Enter|VolumeDown|VolumeMute|VolumeUp|PowerOff|PowerOn"
     
     if [[ ! "$key" =~ ^($known_keys|InputHDMI[0-9]+|Lit_.+)$ ]]; then
@@ -261,12 +259,14 @@ cmd_open() {
         echo -e "${GREEN}[v] Launched app ID: ${id_or_name}${NC}"
     else
         local apps_response=$(roku_get "/query/apps")
+
         [ $? -ne 0 ] && return 1
-        
+
         local app_id=$(echo "$apps_response" | grep -i "${id_or_name}" | head -1 | grep -oP 'id="\K[^"]+')
         
         if [ -n "$app_id" ]; then
             local response=$(roku_post "/launch/${app_id}")
+
             [ $? -ne 0 ] && return 1
             echo -e "${GREEN}[v] Launched ${id_or_name} (ID: ${app_id})${NC}"
         else
@@ -280,14 +280,12 @@ cmd_install() {
     local id=$1
     local response=$(roku_post "/install/${id}")
     [ $? -ne 0 ] && return 1
-    
     echo -e "${GREEN}[v] Installing app ID: ${id}${NC}"
 }
 
 cmd_browse() {
     local response=$(roku_post "/search/browse")
     [ $? -ne 0 ] && return 1
-    
     echo -e "${GREEN}[v] Opened browse interface${NC}"
 }
 
@@ -296,7 +294,6 @@ cmd_search() {
     local encoded_query=$(echo "$query" | sed 's/ /%20/g')
     local response=$(roku_post "/search/keyword?keyword=${encoded_query}")
     [ $? -ne 0 ] && return 1
-    
     echo -e "${GREEN}[v] Searching for: ${query}${NC}"
 }
 
@@ -320,7 +317,6 @@ cmd_yt() {
     [ $? -ne 0 ] && return 1
     
     local youtube_id=$(echo "$apps_response" | grep -i "YouTube" | head -1 | grep -oP 'id="\K[^"]+' )
-    
     if [ -z "$youtube_id" ]; then
         echo -e "${RED}YouTube app not found on this Roku${NC}"
         return 1
@@ -355,6 +351,7 @@ cmd_active_tv_channel() {
 }
 
 cmd_power() {
+    # Track power state
     local state_file="${POWER_STATE_FILE/#\~/$HOME}"
     local current_state="off"
     
@@ -373,11 +370,33 @@ cmd_power() {
     fi
 }
 
+cmd_connect() {
+    local ip=$1
+    
+    if [ -z "$ip" ]; then
+        echo -e "${RED}Please provide an IP address${NC}"
+        return 1
+    fi
+    
+    check_deps
+    check_connection "$ip"
+    
+    if [ $? -eq 0 ]; then
+        ROKU_IP=$ip
+        echo -e "${GREEN}[v] Connected to ${ip}${NC}"
+        
+        local device_info=$(roku_get "/query/device-info")
+        local device_name=$(echo "$device_info" | grep -oP '(?<=<friendly-device-name>)[^<]+' || echo "Roku Device")
+        echo -e "${CYAN}Device: ${WHITE}${device_name}${NC}"
+    fi
+}
+
 process_command() {
     local cmd=$1
     shift
     
     case "$cmd" in
+        # Commands that don't require device connection
         help)
             cmd_help
             ;;
@@ -387,46 +406,113 @@ process_command() {
         update)
             cmd_update
             ;;
+        connect)
+            cmd_connect "$@"
+            ;;
         clear)
             cmd_clear
             ;;
+        # Commands that require device connection
         info)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use 'connect <ip>' command first${NC}"
+                return 1
+            fi
             cmd_info "$@"
             ;;
         keydown|keyup|keypress)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use 'connect <ip>' command first${NC}"
+                return 1
+            fi
             cmd_key "$cmd" "$@"
             ;;
         power)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_power
             ;;
         apps)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_apps
             ;;
         app)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_active_app
             ;;
         open)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_open "$@"
             ;;
         install)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_install "$@"
             ;;
         browse)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_browse
             ;;
         search)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_search "$@"
             ;;
         hdmi)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_hdmi "$@"
             ;;
         yt)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_yt "$@"
             ;;
         tv-channels)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_tv_channels
             ;;
         active-tv-channel)
+            if [ -z "$ROKU_IP" ]; then
+                echo -e "${RED}Not connected to a device, use the 'connect <ip>' command first${NC}"
+                return 1
+            fi
+
             cmd_active_tv_channel
             ;;
         exit|quit)
@@ -435,7 +521,7 @@ process_command() {
         "")
             ;;
         *)
-            echo -e "${RED}Command not found, run help${NC}"
+            echo -e "${RED}Command not found${NC}"
             ;;
     esac
 }
@@ -443,18 +529,38 @@ process_command() {
 interactive_mode() {
     history -c
     HISTFILE=~/.local/share/rokucli/history
+
     mkdir -p ~/.local/share/rokucli
     
     while true; do
         read -e -r -p "$(echo -e ${GREEN}Command: ${NC})" input
         [ -z "$input" ] && continue
+
         history -s "$input"
         read -ra parts <<< "$input" 
+
         process_command "${parts[@]}"
     done
 }
 
 main() {
+    if [ $# -gt 0 ] && [[ "$1" == --* ]]; then
+        case "$1" in
+            --help)
+                cmd_help
+                exit 0
+                ;;
+            --version)
+                cmd_version
+                exit 0
+                ;;
+            --update)
+                cmd_update
+                exit 0
+                ;;
+        esac
+    fi
+
     if [ $# -eq 0 ]; then
         echo -e "${RED}Usage: roku <ip> [options]${NC}"
         echo ""
@@ -462,25 +568,18 @@ main() {
         echo -e "  ${GREEN}--help${NC}                    Show help message"
         echo -e "  ${GREEN}--version${NC}                 Show version info"
         echo -e "  ${GREEN}--update${NC}                  Update RokuCLI"
-        echo -e "  ${GREEN}--info <key>${NC}              Get device info"
-        echo -e "  ${GREEN}--keypress <key>${NC}          Send keypress command"
-        echo -e "  ${GREEN}--keydown <key>${NC}           Send keydown command"
-        echo -e "  ${GREEN}--keyup <key>${NC}             Send keyup command"
-        echo -e "  ${GREEN}--power${NC}                   Toggle power"
-        echo -e "  ${GREEN}--apps${NC}                    List all apps"
-        echo -e "  ${GREEN}--app${NC}                     Get currently active app"
-        echo -e "  ${GREEN}--open <app>${NC}              Open app by name or ID"
-        echo -e "  ${GREEN}--install <id>${NC}            Install app by ID"
-        echo -e "  ${GREEN}--browse${NC}                  Open browse interface"
-        echo -e "  ${GREEN}--search <query>${NC}          Search for content"
-        echo -e "  ${GREEN}--hdmi <num>${NC}              Switch to HDMI input"
-        echo -e "  ${GREEN}--yt <video_id>${NC}           Open YouTube video"
-        echo -e "  ${GREEN}--tv-channels${NC}             List TV channels"
-        echo -e "  ${GREEN}--active-tv-channel${NC}       Get active TV channel"
         exit 1
     fi
     
-    ROKU_IP=$1
+    local first_arg=$1
+
+    if [[ "$first_arg" == --* ]]; then
+        echo -e "${RED}Unknown flag: ${first_arg}${NC}"
+        echo -e "${YELLOW}IP address is required for device commands${NC}"
+        exit 1
+    fi
+    
+    ROKU_IP=$first_arg
     shift
 
     check_deps
@@ -555,8 +654,9 @@ main() {
 
         local device_info=$(roku_get "/query/device-info")
         local tv_version=$(echo "$device_info" | grep -oP '(?<=<software-version>)[^<]+' || echo "XX.XX.XX")
+        local device_name=$(echo "$device_info" | grep -oP '(?<=<friendly-device-name>)[^<]+' || echo "Roku Device")
         
-        show_ascii "$ROKU_IP" "$DEV_MODE_STATUS" "$tv_version"
+        show_ascii "$DEV_MODE_STATUS" "$tv_version" "$device_name"
         interactive_mode
     fi
 }
