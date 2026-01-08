@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# RokuCLI v1.2.2
+# RokuCLI v1.2.3
 # Repo: https://github.com/skylvie/rokucli
 # Source Code License: MIT
 
-VERSION="1.2.2"
+VERSION="1.2.3"
 
 # Colors
 RED='\033[0;31m'
@@ -333,7 +333,7 @@ cmd_sideload() {
         echo -e "${GREEN}[v] Successfully uploaded app!${NC}"
         return 0
     elif [ "$http_code" == "401" ]; then
-        echo -e "${RED}Error: Unable to authenticate. Check your password.${NC}"
+        echo -e "${RED}Unable to authenticate ${NC}"
         return 1
     else
         echo -e "${RED}Error: Upload failed (HTTP ${http_code})${NC}"
