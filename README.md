@@ -3,7 +3,7 @@ A CLI for controlling your RokuTV using the Roku's ECP server
 
 ## Installation
 ```sh
-curl -fsSL https://bin.skylvi.net/install_rokucli.sh | bash
+curl -fsSL https://qwq.sh/roku.sh | bash
 ```
 Or:
 ```sh
